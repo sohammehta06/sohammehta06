@@ -1,6 +1,6 @@
 ```
 $ whoami
-soham. growth at jitsu (yc s20) — the open-source segment alternative.
+soham. growth at jitsu (yc s20) — the open-source collection layer.
 before: gooseworks (yc w23), lyzr ai. bootstrapped my own saas to $120k arr, profitable from day one.
 ```
 
