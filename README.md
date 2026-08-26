@@ -1,16 +1,16 @@
 ```
 $ whoami
-soham. building at gooseworks (yc w24). before, lyzr.
-agents that ship work, not demos.
+soham. growth at jitsu (yc s20) — the open-source segment alternative.
+before: gooseworks (yc w23), lyzr ai. bootstrapped my own saas to $120k arr, profitable from day one.
 ```
 
 <!--START_SECTION:now-->
 ```
 $ cat now.txt
-building  · gooseworks (yc w24)
-  shipping  · agents for gtm workflows
+  building  · jitsu (yc s20)
+  shipping  · open-source event pipeline — mit licensed, self-hostable
   reading   · sutton, anthropic engineering blog
-  open to   · oss collabs in the agent space
+  open to   · oss collabs in the agent + data space
 ```
 <!--END_SECTION:now-->
 
@@ -36,9 +36,10 @@ $ cat principles.txt
 
 ```
 $ contact --list
-mail   soham@gooseworks.ai
-x      sohamehta_
-site   sohamehta.com
+mail   sohammehta.e@gmail.com
+x      sohmehta
+in     sohmehta
+work   jitsu.com
 ```
 
 <sub>this readme rebuilds itself every 6 hours · last build <!--BUILD_TIME-->2026-08-17 18:49 UTC<!--/BUILD_TIME--></sub>

@@ -88,13 +88,13 @@ def now_block():
     """static-ish 'currently' section - edit NOW.md to update without code change"""
     now_file = Path("NOW.md")
     if now_file.exists():
-        content = now_file.read_text().strip()
+        content = now_file.read_text().strip("\n")
     else:
         content = (
-            "  building  · gooseworks (yc w24)\n"
-            "  shipping  · agents for gtm workflows\n"
-            "  reading   · papers on multi-agent coordination\n"
-            "  open to   · oss collabs in the agent space"
+            "  building  · jitsu (yc s20)\n"
+            "  shipping  · open-source event pipeline — mit licensed, self-hostable\n"
+            "  reading   · sutton, anthropic engineering blog\n"
+            "  open to   · oss collabs in the agent + data space"
         )
     return f"```\n$ cat now.txt\n{content}\n```"
 

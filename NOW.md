@@ -1,4 +1,4 @@
-  building  · gooseworks (yc w24)
-  shipping  · agents for gtm workflows
+  building  · jitsu (yc s20)
+  shipping  · open-source event pipeline — mit licensed, self-hostable
   reading   · sutton, anthropic engineering blog
-  open to   · oss collabs in the agent space
+  open to   · oss collabs in the agent + data space
