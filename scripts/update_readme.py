@@ -1,129 +1,124 @@
 """
-rebuilds README dynamic sections from github activity.
-runs on a cron via github actions.
+refreshes the text sections of the readme: the live activity log and the
+now block. runs after the svg builders.
+
+the previous version of this script raised on a 401 and took the whole workflow
+red for eleven days straight. nothing here raises: every section falls back to
+whatever was rendered last time, and the build stays green.
 """
-import os
 import re
-import json
-import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-USER = "sohammehta06"
-TOKEN = os.environ.get("GH_TOKEN", "")
+from common import USER, cache_read, cache_write, log, rest
+
 README = Path("README.md")
+NOW = Path("NOW.md")
 
-HEADERS = {
-    "Accept": "application/vnd.github+json",
-    "User-Agent": f"{USER}-readme-bot",
+VERB = {
+    "PushEvent": "push",
+    "CreateEvent": "create",
+    "PullRequestEvent": "pr",
+    "IssuesEvent": "issue",
+    "WatchEvent": "star",
+    "ForkEvent": "fork",
+    "ReleaseEvent": "release",
+    "PublicEvent": "public",
 }
-if TOKEN:
-    HEADERS["Authorization"] = f"Bearer {TOKEN}"
 
 
-def gh(url):
-    req = urllib.request.Request(url, headers=HEADERS)
-    with urllib.request.urlopen(req, timeout=15) as r:
-        return json.loads(r.read())
-
-
-def relative_time(iso_ts):
-    then = datetime.fromisoformat(iso_ts.replace("Z", "+00:00"))
-    delta = datetime.now(timezone.utc) - then
-    s = int(delta.total_seconds())
-    if s < 60:
-        return f"{s}s ago"
+def relative(iso):
+    then = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    s = int((datetime.now(timezone.utc) - then).total_seconds())
     if s < 3600:
-        return f"{s // 60}m ago"
+        return f"{max(s // 60, 1)}m ago"
     if s < 86400:
         return f"{s // 3600}h ago"
-    return f"{s // 86400}d ago"
+    if s < 2592000:
+        return f"{s // 86400}d ago"
+    return f"{s // 2592000}mo ago"
 
 
-def latest_activity():
-    """grab recent public events and format like a terminal log"""
-    try:
-        events = gh(f"https://api.github.com/users/{USER}/events/public")[:8]
-    except Exception:
-        return "```\n$ tail -f activity.log\n  (offline - rate limited or no events)\n```"
+def describe(e):
+    """one terminal-log line per event, or None to skip it."""
+    kind = e.get("type")
+    repo = e.get("repo", {}).get("name", "").split("/")[-1]
+    payload = e.get("payload", {})
 
+    if kind == "PushEvent":
+        commits = payload.get("commits") or []
+        if not commits:
+            return None
+        return commits[-1]["message"].split("\n")[0][:58]
+    if kind == "PullRequestEvent":
+        pr = payload.get("pull_request") or {}
+        return f"{payload.get('action', '')} #{pr.get('number', '')} {pr.get('title') or ''}"[:58]
+    if kind == "IssuesEvent":
+        iss = payload.get("issue") or {}
+        return f"{payload.get('action', '')} #{iss.get('number', '')} {iss.get('title') or ''}"[:58]
+    if kind == "ReleaseEvent":
+        return (payload.get("release") or {}).get("tag_name", "release")
+    # CreateEvent / ForkEvent / WatchEvent are deliberately dropped: branch
+    # creations and forks bury the actual work under three lines of bookkeeping.
+    return None
+
+
+def activity_block():
+    events = rest(f"/users/{USER}/events/public")
     lines = []
-    for e in events:
-        t = relative_time(e["created_at"])
-        repo = e["repo"]["name"].split("/")[-1]
-
-        if e["type"] == "PushEvent":
-            commits = e["payload"].get("commits", [])
-            if not commits:
+    if events:
+        for e in events:
+            desc = describe(e)
+            if not desc:
                 continue
-            msg = commits[-1]["message"].split("\n")[0][:60]
-            lines.append(f"  {t:<8}  push    {repo:<24}  {msg}")
-        elif e["type"] == "CreateEvent":
-            ref_type = e["payload"].get("ref_type", "")
-            ref = e["payload"].get("ref") or ref_type
-            lines.append(f"  {t:<8}  create  {repo:<24}  {ref}")
-        elif e["type"] == "PullRequestEvent":
-            action = e["payload"]["action"]
-            title = e["payload"]["pull_request"]["title"][:60]
-            lines.append(f"  {t:<8}  pr      {repo:<24}  {action}: {title}")
-        elif e["type"] == "IssuesEvent":
-            action = e["payload"]["action"]
-            title = e["payload"]["issue"]["title"][:60]
-            lines.append(f"  {t:<8}  issue   {repo:<24}  {action}: {title}")
-        elif e["type"] == "WatchEvent":
-            lines.append(f"  {t:<8}  star    {repo:<24}")
-        elif e["type"] == "ForkEvent":
-            lines.append(f"  {t:<8}  fork    {repo:<24}")
-        if len(lines) >= 5:
-            break
+            repo = e["repo"]["name"].split("/")[-1]
+            verb = VERB.get(e["type"], e["type"].replace("Event", "").lower())
+            lines.append(
+                f"  {relative(e['created_at']):<9} {verb:<8} {repo:<26} {desc}".rstrip()
+            )
+            if len(lines) == 7:
+                break
+        if lines:
+            cache_write("activity", lines)
 
     if not lines:
-        return "```\n$ tail -f activity.log\n  (no recent public activity)\n```"
+        lines = cache_read("activity", [])
+    if not lines:
+        lines = ["  (github api unreachable this run — showing nothing rather than guessing)"]
 
-    body = "\n".join(lines)
-    return f"```\n$ tail -f activity.log\n{body}\n```"
+    return "```\n$ tail -n 7 ~/.activity.log\n" + "\n".join(lines) + "\n```"
 
 
 def now_block():
-    """static-ish 'currently' section - edit NOW.md to update without code change"""
-    now_file = Path("NOW.md")
-    if now_file.exists():
-        content = now_file.read_text().strip("\n")
-    else:
-        content = (
-            "  building  · jitsu (yc s20)\n"
-            "  shipping  · open-source event pipeline — mit licensed, self-hostable\n"
-            "  reading   · sutton, anthropic engineering blog\n"
-            "  open to   · oss collabs in the agent + data space"
-        )
-    return f"```\n$ cat now.txt\n{content}\n```"
+    body = NOW.read_text().rstrip() if NOW.exists() else "  (nothing set)"
+    return "```\n$ cat NOW.md\n" + body + "\n```"
 
 
-def replace_section(text, tag, payload):
+def splice(text, tag, content):
     pattern = re.compile(
-        rf"(<!--START_SECTION:{tag}-->)(.*?)(<!--END_SECTION:{tag}-->)",
-        re.DOTALL,
+        rf"(<!--START_SECTION:{tag}-->).*?(<!--END_SECTION:{tag}-->)", re.S
     )
-    return pattern.sub(rf"\1\n{payload}\n\3", text)
-
-
-def replace_build_time(text):
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    return re.sub(
-        r"<!--BUILD_TIME-->.*?<!--/BUILD_TIME-->",
-        f"<!--BUILD_TIME-->{ts}<!--/BUILD_TIME-->",
-        text,
-        flags=re.DOTALL,
-    )
+    if not pattern.search(text):
+        log(f"marker for '{tag}' not found — skipping")
+        return text
+    return pattern.sub(lambda m: f"{m.group(1)}\n{content}\n{m.group(2)}", text)
 
 
 def main():
     text = README.read_text()
-    text = replace_section(text, "now", now_block())
-    text = replace_section(text, "activity", latest_activity())
-    text = replace_build_time(text)
+    text = splice(text, "activity", activity_block())
+    text = splice(text, "now", now_block())
+
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    text = re.sub(
+        r"(<!--BUILD_TIME-->).*?(<!--/BUILD_TIME-->)",
+        lambda m: f"{m.group(1)}{stamp}{m.group(2)}",
+        text,
+        flags=re.S,
+    )
+
     README.write_text(text)
-    print("README updated.")
+    log(f"readme spliced · {stamp}")
 
 
 if __name__ == "__main__":

@@ -1,27 +1,31 @@
 """
-generates a minimal contribution heatmap svg in monospace style.
-pulls real contribution counts via the github graphql api.
-"""
-import os
-import json
-import urllib.request
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
+full-year contribution heatmap.
 
-USER = "sohammehta06"
-TOKEN = os.environ.get("GH_TOKEN", "")
-ASSETS = Path("assets")
+rendered from the graphql contributionCalendar, which - when the workflow token
+belongs to soham - includes private contribution counts. that is the whole point
+of generating this ourselves: the stock profile graph hides ~840 private commits.
+
+falls back to the last cached calendar if the api is unreachable.
+"""
+from datetime import date, datetime
+
+from common import (ASSETS, USER, cache_read, cache_write, esc, graphql, log,
+                    panel, text, titlebar, write_svg)
+
+W = 860
+CELL, GAP = 11, 3
+STEP = CELL + GAP
+PAD_L, PAD_T = 42, 62      # room for day labels / month labels
+H = 246
 
 QUERY = """
-query($login: String!, $from: DateTime!, $to: DateTime!) {
+query($login: String!) {
   user(login: $login) {
-    contributionsCollection(from: $from, to: $to) {
+    contributionsCollection {
       contributionCalendar {
+        totalContributions
         weeks {
-          contributionDays {
-            date
-            contributionCount
-          }
+          contributionDays { date contributionCount weekday }
         }
       }
     }
@@ -29,110 +33,148 @@ query($login: String!, $from: DateTime!, $to: DateTime!) {
 }
 """
 
-
-def fetch_contributions():
-    if not TOKEN:
-        return None
-    to = datetime.now(timezone.utc)
-    frm = to - timedelta(days=180)
-    body = json.dumps({
-        "query": QUERY,
-        "variables": {
-            "login": USER,
-            "from": frm.isoformat(),
-            "to": to.isoformat(),
-        },
-    }).encode()
-    req = urllib.request.Request(
-        "https://api.github.com/graphql",
-        data=body,
-        headers={
-            "Authorization": f"Bearer {TOKEN}",
-            "Content-Type": "application/json",
-            "User-Agent": f"{USER}-readme-bot",
-        },
-    )
-    with urllib.request.urlopen(req, timeout=15) as r:
-        data = json.loads(r.read())
-    weeks = data["data"]["user"]["contributionsCollection"]["contributionCalendar"]["weeks"]
-    grid = []
-    for w in weeks:
-        col = [d["contributionCount"] for d in w["contributionDays"]]
-        while len(col) < 7:
-            col.append(0)
-        grid.append(col)
-    return grid
+MONTHS = ["jan", "feb", "mar", "apr", "may", "jun",
+          "jul", "aug", "sep", "oct", "nov", "dec"]
 
 
-def build_svg(grid, dark=False):
-    """rendered as ascii blocks in monospace - reads as a terminal heatmap"""
-    cell = 12
-    gap = 3
-    cols = len(grid)
-    pad_x = 24
-    pad_y = 30
-    width = pad_x * 2 + cols * (cell + gap)
-    height = pad_y * 2 + 7 * (cell + gap) + 24
+def fetch():
+    data = graphql(QUERY, login=USER)
+    try:
+        cal = data["user"]["contributionsCollection"]["contributionCalendar"]
+        weeks = [
+            [(d["date"], d["contributionCount"]) for d in w["contributionDays"]]
+            for w in cal["weeks"]
+        ]
+        payload = {"total": cal["totalContributions"], "weeks": weeks}
+        cache_write("calendar", payload)
+        return payload
+    except Exception as e:  # noqa: BLE001
+        log(f"calendar fetch failed ({e}); using cache")
+        return cache_read("calendar", {"total": 0, "weeks": []})
 
-    if dark:
-        bg = "#0d1117"
-        fg = "#c9d1d9"
-        muted = "#484f58"
-        shades = ["#161b22", "#0e4429", "#006d32", "#26a641", "#39d353"]
-    else:
-        bg = "#ffffff"
-        fg = "#24292f"
-        muted = "#8b949e"
-        shades = ["#ebedf0", "#9be9a8", "#40c463", "#30a14e", "#216e39"]
 
-    def shade(n):
-        if n == 0:
-            return shades[0]
-        if n < 3:
-            return shades[1]
-        if n < 6:
-            return shades[2]
-        if n < 10:
-            return shades[3]
-        return shades[4]
+def level(count, peak):
+    """bucket a day's count into one of 5 heat steps, scaled to this user's peak."""
+    if count <= 0:
+        return 0
+    if peak <= 4:
+        return min(4, count)
+    q = count / peak
+    if q <= 0.25:
+        return 1
+    if q <= 0.50:
+        return 2
+    if q <= 0.75:
+        return 3
+    return 4
 
-    rects = []
-    for x, col in enumerate(grid):
-        for y, n in enumerate(col):
-            rx = pad_x + x * (cell + gap)
-            ry = pad_y + y * (cell + gap)
-            rects.append(
-                f'<rect x="{rx}" y="{ry}" width="{cell}" height="{cell}" rx="2" fill="{shade(n)}"/>'
+
+def streaks(days):
+    """days = [(iso_date, count)] in chronological order."""
+    longest = cur = 0
+    today = date.today()
+    for iso, c in days:
+        if c > 0:
+            cur += 1
+            longest = max(longest, cur)
+        else:
+            # an empty *today* shouldn't break a streak that is still alive
+            if datetime.strptime(iso, "%Y-%m-%d").date() != today:
+                cur = 0
+    return cur, longest
+
+
+def build_factory(cal):
+    weeks = cal["weeks"]
+    days = [d for w in weeks for d in w]
+    counts = [c for _, c in days]
+    peak = max(counts) if counts else 0
+    total = cal["total"]
+    cur_streak, best_streak = streaks(days)
+    active = sum(1 for c in counts if c > 0)
+    last30 = sum(c for _, c in days[-30:])
+
+    def build(t):
+        parts = [panel(t, W, H), titlebar(t, W, "contributions.svg — last 12 months")]
+
+        # ---- month labels along the top
+        seen = set()
+        for wi, week in enumerate(weeks):
+            if not week:
+                continue
+            d = datetime.strptime(week[0][0], "%Y-%m-%d").date()
+            key = (d.year, d.month)
+            if d.day <= 7 and key not in seen:
+                seen.add(key)
+                parts.append(
+                    text(MONTHS[d.month - 1], PAD_L + wi * STEP, PAD_T - 8, t.dim, 10)
+                )
+
+        # ---- weekday labels down the left
+        for wd, lbl in ((1, "mon"), (3, "wed"), (5, "fri")):
+            parts.append(
+                text(lbl, PAD_L - 9, PAD_T + wd * STEP + CELL - 1, t.dim, 10, anchor="end")
             )
 
-    total = sum(sum(c) for c in grid)
-    label_y = pad_y + 7 * (cell + gap) + 18
-    header = f"$ contributions --last 180d  → {total} commits"
+        # ---- the grid, revealed as a diagonal wave
+        for wi, week in enumerate(weeks):
+            for di, (iso, count) in enumerate(week):
+                lv = level(count, peak)
+                x = PAD_L + wi * STEP
+                y = PAD_T + di * STEP
+                delay = 0.25 + (wi + di) * 0.012
+                plural = "" if count == 1 else "s"
+                parts.append(
+                    f'<rect x="{x}" y="{y}" width="{CELL}" height="{CELL}" rx="2.5" '
+                    f'fill="{t.levels[lv]}" opacity="0">'
+                    f'<animate attributeName="opacity" from="0" to="1" dur="0.35s" '
+                    f'begin="{delay:.2f}s" fill="freeze"/>'
+                    f"<title>{esc(f'{count} contribution{plural} on {iso}')}</title>"
+                    f"</rect>"
+                )
 
-    svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}" fill="none">
-  <rect width="100%" height="100%" fill="{bg}"/>
-  <text x="{pad_x}" y="20" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="{fg}">{header}</text>
-  {"".join(rects)}
-  <text x="{pad_x}" y="{label_y}" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="10" fill="{muted}">less</text>
-  <text x="{width - pad_x - 24}" y="{label_y}" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="10" fill="{muted}">more</text>
-</svg>'''
-    return svg
+        grid_bottom = PAD_T + 7 * STEP + 12
 
+        # ---- stat readout
+        # deliberately no "current streak" here - it reads 0 on any ordinary day off
+        # and says nothing useful. trailing-30 is the honest momentum number.
+        stats = [
+            (f"{total:,}", "contributions"),
+            (f"{last30:,}", "last 30 days"),
+            (f"{best_streak}", "longest streak"),
+            (f"{active}", "active days"),
+            (f"{peak}", "busiest day"),
+        ]
+        sx = PAD_L
+        for i, (val, lbl) in enumerate(stats):
+            parts.append(
+                f'<g opacity="0"><animate attributeName="opacity" from="0" to="1" '
+                f'dur="0.5s" begin="{1.0 + i * 0.09:.2f}s" fill="freeze"/>'
+                + text(val, sx, grid_bottom + 16, t.text, 17, weight="bold")
+                + text(lbl, sx, grid_bottom + 31, t.dim, 10)
+                + "</g>"
+            )
+            sx += 132
 
-def fallback_grid():
-    """if no token / api fails, build a believable-looking placeholder"""
-    import random
-    random.seed(42)
-    return [[random.choices([0, 1, 3, 6, 12], weights=[40, 25, 20, 10, 5])[0] for _ in range(7)] for _ in range(26)]
+        # ---- legend, bottom right
+        lx = W - 26 - 5 * STEP - 60
+        parts.append(text("less", lx - 6, grid_bottom + 24, t.dim, 10, anchor="end"))
+        for i in range(5):
+            parts.append(
+                f'<rect x="{lx + i * STEP}" y="{grid_bottom + 15}" width="{CELL}" '
+                f'height="{CELL}" rx="2.5" fill="{t.levels[i]}"/>'
+            )
+        parts.append(
+            text("more", lx + 5 * STEP + 6, grid_bottom + 24, t.dim, 10)
+        )
+        return "".join(parts)
 
-
-def main():
-    ASSETS.mkdir(exist_ok=True)
-    grid = fetch_contributions() or fallback_grid()
-    (ASSETS / "graph-light.svg").write_text(build_svg(grid, dark=False))
-    (ASSETS / "graph-dark.svg").write_text(build_svg(grid, dark=True))
-    print(f"graph written. {sum(sum(c) for c in grid)} total contribs.")
+    return build
 
 
 if __name__ == "__main__":
-    main()
+    cal = fetch()
+    n_weeks = len(cal["weeks"])
+    width = max(W, PAD_L + n_weeks * STEP + 26)
+    write_svg("graph", build_factory(cal), width, H)
+    log(f"graph built · {cal['total']} contributions across {n_weeks} weeks")
