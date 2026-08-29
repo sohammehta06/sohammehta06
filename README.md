@@ -72,5 +72,5 @@ every graphic above is generated from the github api by
 <a href="./scripts">scripts/</a> and committed by
 <a href="./.github/workflows/rebuild.yml">a workflow</a> — no third-party badge
 services, nothing to rate-limit, nothing to go stale.
-last build <!--BUILD_TIME-->2026-08-29 01:32 UTC<!--/BUILD_TIME-->
+last build <!--BUILD_TIME-->2026-08-29 01:38 UTC<!--/BUILD_TIME-->
 </sub>
