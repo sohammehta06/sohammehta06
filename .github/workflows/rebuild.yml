@@ -55,8 +55,6 @@ jobs:
         run: |
           cd "$GITHUB_WORKSPACE"
           python scripts/build_header.py
-          python scripts/build_graph.py
-          python scripts/build_stats.py
           python scripts/update_readme.py
 
       - name: commit
