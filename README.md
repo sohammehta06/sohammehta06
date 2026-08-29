@@ -6,8 +6,8 @@
 <!--START_SECTION:now-->
 ```
 $ cat NOW.md
-  now       · jitsu's open-source event pipeline — mit licensed, self-hostable
-  building  · agent tooling for gtm work that usually needs a team
+  building  · jitsu (yc s20)
+  shipping  · open-source event pipeline — mit licensed, self-hostable
   reading   · sutton, anthropic engineering blog
   open to   · oss collabs in the agent + data space
 ```
@@ -16,6 +16,5 @@ $ cat NOW.md
 <sub>
 <a href="https://jitsu.com">jitsu.com</a> ·
 <a href="https://x.com/sohmehta">x</a> ·
-<a href="https://linkedin.com/in/sohamehta">in</a> ·
-soham@tryjitsu.com
+<a href="https://www.linkedin.com/in/sohamehta/">in</a>
 </sub>

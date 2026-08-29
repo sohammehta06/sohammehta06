@@ -22,10 +22,13 @@ NAME = "soham mehta"
 SUB = "growth @ jitsu (yc s20) · the open-source collection layer"
 
 # (label, value, detail, emphasise_detail)
+# every string below traces to something soham said directly. do not infer a
+# role, a title or an outcome from a repo, an email domain or a company's
+# reputation - if it was not stated, it does not go on the profile.
 LEDGER = [
     ("now",    "jitsu (yc s20)",      "growth · open-source event pipeline", False),
-    ("before", "gooseworks (yc w23)", "growth", False),
-    ("",       "lyzr ai",             "growth", False),
+    ("before", "gooseworks (yc w23)", "founders' office", False),
+    ("",       "lyzr ai",             "founders' office · product + gtm", False),
     ("own",    "bootstrapped saas",   "$120k arr · profitable from day one", True),
 ]
 
